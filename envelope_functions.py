@@ -1,10 +1,9 @@
 import scipy.io.wavfile
+import scipy.fftpack
 import numpy
 import time
 import matplotlib.pyplot as plt
 
-def pitch_selector(pitch, ft):
-    return False
     
 
 def make_pow_2(x):
@@ -21,16 +20,20 @@ def make_pow_2(x):
 	return x,pow2
 
 def load_audio(fn='aaa.wav'):
-	w_file = scipy.io.wavfile.read(fn)
-	freq = w_file[0]
-	audio = w_file[1]
-	audio_L = audio[:,0]
-	audio_R = audio[:,1]
-	#pad with zeros to make a power of two length
-	audio_L, pow2 = make_pow_2(audio_L)
-	audio_R, pow2 = make_pow_2(audio_R)
-	return audio_L, audio_R, freq
-    
+    w_file = scipy.io.wavfile.read(fn)
+    freq = w_file[0]
+    audio = w_file[1]
+    if(audio.ndim > 1 ):
+        audio_L = audio[:,0]
+        audio_R = audio[:,1]
+        #pad with zeros to make a power of two length
+    else:
+        audio_L = audio
+        audio_R = audio
+    audio_L, pow2 = make_pow_2(audio_L)
+    audio_R, pow2 = make_pow_2(audio_R)
+    return audio_L, audio_R, freq
+
 def rms(x,window_size):
 	return numpy.sqrt(sum(x**2)/window_size)
 
@@ -131,19 +134,19 @@ def DFT(x):
 	return numpy.dot(M,x)
 	
 #--------------------------------
-def DCT(x):
-	"""
-	Discrete Cosine Transform algorithm
-	"""
-	a_vals = numpy.ones(x.shape[0])
-	a_vals[1:] = numpy.sqrt(2)
-	ft = numpy.fft.fft(x)[0:x.shape[0]]
-	th = numpy.arctan(ft.imag/ft.real)
-	ft = numpy.absolute(ft)
-	n = x.shape[0]
-	return a_vals*ft*numpy.cos(th-numpy.pi*numpy.arange(n)/(2.*n))
+# def DCT(x):
+	# """
+	# Discrete Cosine Transform algorithm
+	# """
+	# a_vals = numpy.ones(x.shape[0])
+	# a_vals[1:] = numpy.sqrt(2)
+	# ft = numpy.fft.fft(x)[0:x.shape[0]]
+	# th = numpy.arctan(ft.imag/ft.real)
+	# ft = numpy.absolute(ft)
+	# n = x.shape[0]
+	# return a_vals*ft*numpy.cos(th-numpy.pi*numpy.arange(n)/(2.*n))
 #----------------------------------------------
-def _tae(audio,threshold=None, order=20):
+def _tae(audio,threshold=None, order=20,power=False):
     '''
     Calculate the True Amplitude Envelope of the given audio signal,
     with the given order.
@@ -155,9 +158,10 @@ def _tae(audio,threshold=None, order=20):
 
     N = len(audio)
     fwr = numpy.abs(audio)
+    if power:
+        fwr[numpy.nonzero(fwr)] = numpy.log(fwr[numpy.nonzero(fwr)])
     if threshold is None:
     	threshold = 0.025 * numpy.max(fwr)
-
     go = True
     while go:
         ceps = numpy.fft.ifft(fwr)
@@ -165,74 +169,84 @@ def _tae(audio,threshold=None, order=20):
         env = numpy.fft.fft(ceps).real
         fwr = numpy.maximum(fwr, env)
         go = ((fwr - env) > threshold).any()
-
     return env
 
-def tae(audio, frame_size=512, hop_size=256, order=None):
+def tae(audio, frame_size=512, hop_size=None, order=None,power=False):
     '''
     Streaming version of the True Amplitude Envelope.
     '''
     env = numpy.zeros(len(audio))
     # TODO: should we calculate an optimal order here?
     #       this value seems to work well in practice
+    if hop_size is None:
+        hop_size = frame_size/2
     if order is None:
         order = 6
     p = 0
     t = .025*numpy.max(numpy.abs(audio))
+    if power:
+        t = .025 * numpy.log(numpy.max(numpy.abs(audio)))
     while p <= len(audio) - frame_size:
         frame = audio[p:p + frame_size]
-        env[p:p + frame_size] += _tae(frame, order) * numpy.hanning(len(frame))
+        env[p:p + frame_size] += _tae(frame,t, order,power) * numpy.hanning(len(frame))
         p += hop_size
-
     return env
 
-def cepstral(x, n_c = 100):
-    """
-    Cepstral smoothing to find envelope
-    """
-    dft = numpy.fft.fft(x)
 
 def toeplitz(arr):
     """
     creates a toeplitz matrix 2N-1 x 2N-1 where N is the size of arr
     """
-    toep = numpy.zeros((len(arr)*2.-1,len(arr)))
+    toep = numpy.zeros((len(arr),len(arr)))
     for i in numpy.arange(len(arr)):
-        toep[:,i][i:(i+len(arr))] = arr
+        toep[:,i][i:] = arr[:len(arr)-i]
+        toep[i,:][i:] = arr[:len(arr)-i]
     return toep
 
-def FLP(arr, n_coefs):
-    R = numpy.zeros(n_coefs+1)
-    for i in range(n_coefs+1):
-        for j in range(len(arr)-i):
-            R[i] += arr[j]*arr[j+i]
-    A = numpy.zeros(n_coefs+1)
-    A[0] = 1.
     
-    Ek = R[0]
-    #levinson Durbin recursion
-    for i in range(n_coefs):
-        lmd=0.0
-        for j in range(i):
-            lmd -= A[j]*R[i+1-j]
-        lmd = lmd/Ek
-        for k in range((i+1)/2):
-            tmp = A[i+1-k]+lmd*A[k]
-            A[k] = A[k]+lmd*A[i+1-k]
-            A[i+1-k] = tmp
-        Ek = Ek * (1.0-lmd*lmd)
-        
-    pred = arr.copy()
-    for i in range(len(pred)):
-        pred[i] = 0.0
-        for j in range(n_coefs):
-            pred[i] = pred[i]-A[j]*arr[i-1-j]
-    return pred
-            
-# def top_peaks(x,n_peaks = 10):
-    # ft = numpy.fft.fft(x)
-    # peak_inds = numpy.argsort(-abs(ft))[:n_peaks*2]
-    # ft_n = numpy.zeros(len(ft))
-    # ft_n[peak_inds] = ft[peak_inds]
-    # ift = numpy.fft.ifft(ft_n)
-    # return ift
+def autolpc(x,order=10):
+    """
+    computes LPC coefficients with numpys built in linear equation solver
+    """
+    L= len(x)
+    r = numpy.zeros(order+1)
+    for i in range(order+1):
+        r[i] = numpy.dot(x[0:L-i],x[i:L])
+    R = toeplitz(r[:order])
+    a = numpy.linalg.solve(R,r[1:])
+    A = numpy.append([1],-1.*a)
+    G = numpy.sqrt(numpy.sum(A*r))
+    return A, G, r, a
+    
+def FDLP(x,order=10, filter=None):
+    """
+    uses LPC to extract the original envelope from the DCT
+    """
+    d = scipy.fftpack.dct(x,norm='ortho')
+    if filter is not None:
+        d = d * filter 
+    A,G,r,a = autolpc(d,order)
+    H = G/numpy.fft.fft(A,len(d))
+    half = H[0:len(H)/2]
+    #half = numpy.sqrt(half)
+    return numpy.arange(0,len(d),2),abs(half)/max(abs(half))
+    #plt.plot(numpy.arange(0,len(d),2),abs(half)/max(abs(half)))
+
+def FDLP_windowed(x,w_size,order=10,filter=None):
+    n_windows = len(x)/w_size
+    # TODO
+    
+def DCT(x):
+    """ how DCT is calculated, scipy.fftpack.dft is faster though"""
+    N = len(x)
+    X = numpy.zeros(N)
+    for i in numpy.arange(N):
+        sum = 0.
+        if i == 0:
+            s = numpy.sqrt(.5)
+        else:
+            s = 1.
+        for n in numpy.arange(N):
+            sum += s * x[n] * numpy.cos(numpy.pi*(n+.5)*i/N)
+        X[i] = sum * numpy.sqrt(2./N)
+    return X

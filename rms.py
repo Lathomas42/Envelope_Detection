@@ -3,6 +3,10 @@ import numpy
 import time
 import matplotlib.pyplot as plt
 
+def pitch_selector(pitch, ft):
+    return False
+    
+
 def make_pow_2(x):
 	"""
 	make an array a power of 2 above its current size (if not a power of 2)
@@ -26,6 +30,7 @@ def load_audio(fn='aaa.wav'):
 	audio_L, pow2 = make_pow_2(audio_L)
 	audio_R, pow2 = make_pow_2(audio_R)
 	return audio_L, audio_R, pow2
+    
 def rms(x,window_size):
 	return numpy.sqrt(sum(x**2)/window_size)
 
@@ -60,10 +65,10 @@ def rms_envelope(fn='aaa.wav', window_size=256):
 	plt.figure()
 	plt.subplot(211)
 	plt.plot(numpy.arange(len(audio_R)),abs(audio_R))
-	plt.plot(numpy.arange(n_windows)*n_windows-n_windows/2.,rms_R)
+	plt.plot(numpy.arange(n_windows)*window_size,rms_R)
 	plt.subplot(212)
 	plt.plot(numpy.arange(len(audio_L)),abs(audio_L))
-	plt.plot(numpy.arange(n_windows)*n_windows-n_windows/2,rms_L)
+	plt.plot(numpy.arange(n_windows)*window_size-window_size/2,rms_L)
 	plt.show()
 #--------------------------
 def hilbert(x):
@@ -180,3 +185,9 @@ def tae(audio, frame_size=512, hop_size=256, order=None):
         p += hop_size
 
     return env
+
+def cepstral(x):
+    """
+    Cepstral smoothing to find envelope
+    """
+    
